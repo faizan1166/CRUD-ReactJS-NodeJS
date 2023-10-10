@@ -1,6 +1,9 @@
 const userModel = require('../model/user');
 const OTP = require("../helper/common");
 const mail = require('../helper/common');
+const loginSchema = require("../model/LoginSchema");
+const bcrypt= require("bcrypt")
+const jwt = require("jsonwebtoken");
 
 module.exports = {
     saveuser: (req, res) => {
@@ -19,6 +22,11 @@ module.exports = {
                     req.body.time = time
                     let otp = OTP.generateOTP()
                     req.body.otp = otp
+                    loginSchema.findOne({id:req.body.id},(err,res)=>{
+                        if(res){
+                            userModel.uid=res._id
+                        }
+                    })
                     userModel(req.body).save((err1, result) => {
                         if (err1) {
                             return res.status(500).send({ responseMessage: "Internal server error", responseCode: 501, error: err1 })
@@ -34,6 +42,7 @@ module.exports = {
             return res.status(501).send({ responseMessage: "Something went wrong", responseCode: 501, error: error })
         }
     },
+
     otpverify: (req, res) => {
         try {
             userModel.findOne({ email: req.body.email }, (err, res2) => {
@@ -140,17 +149,91 @@ module.exports = {
     getallusers: (req, res) => {
         try {
             userModel.find((err, result) => {
+                
                 if (err) {
                     return res.status(500).send({ responseMessage: "Internal server error", responseCode: 501, error: err })
                 }
                 else if (result) {
-                    return res.status(200).send({ responseMessage: "All Users Deatils: ", responseCode: 200, result: result })
+                    // loginSchema.findOne({id:req.body.id},(err,res)=>{
+                    //     if(res){
+                            const loginUid = req.body.id.toString(); 
+                            let filteredUsers = result.filter(item => item.uid === loginUid);
+                            console.log(filteredUsers,loginUid);
+                        // }
+                        return res.status(200).send({ responseMessage: "All Users Deatils: ", responseCode: 200, result: filteredUsers })
+
+                    // })
                 }
             })
         } catch (error) {
             return res.status(501).send({ responseMessage: "Something went wrong", responseCode: 501, error: error })
         }
     },
+
+    register: async (req, res)  =>{
+    try {
+        const { first_name, last_name, email, password } = req.body;
+        if (!(email && password && first_name && last_name)) {
+          res.status(400).send("All input is required");
+        }
+
+        const oldUser = await loginSchema.findOne({ email });
+    
+        if (oldUser) {
+          return res.status(409).send("User Already Exist. Please Login");
+        }
+    
+        encryptedPassword = await bcrypt.hash(password, 10);
+    
+        const user = await loginSchema.create({
+          first_name,
+          last_name,
+          email: email.toLowerCase(), 
+          password: encryptedPassword,
+        });
+   
+        const token = jwt.sign(
+          { user_id: loginSchema._id, email },
+          process.env.TOKEN_KEY,
+          {
+            expiresIn: "2h",
+          }
+        );
+        loginSchema.token = token;
+        res.status(201).json({ user, token });
+      } catch (err) {
+        console.log(err);
+      }
+    },
+
+    login: async (req, res) => {
+        try {
+          const { email, password } = req.body;
+      
+          if (!(email && password)) {
+            return res.status(400).send("All input is required");
+          }
+      
+          const user = await loginSchema.findOne({ email });
+      
+          if (user && (await bcrypt.compare(password, user.password))) {
+            const token = jwt.sign(
+              { user_id: user._id, email },
+              process.env.TOKEN_KEY,
+              {
+                expiresIn: "2h",
+              }
+            );
+      
+            res.status(200).json({ user, token }); // Send user and token in the response
+          } else {
+            res.status(400).send("Invalid Credentials"); // User not found or incorrect password
+          }
+        } catch (err) {
+          console.error(err);
+          res.status(500).send("Internal Server Error");
+        }
+      },      
 
     mail: (req, res) => {
         var transporter = nodemailer.createTransporter({
